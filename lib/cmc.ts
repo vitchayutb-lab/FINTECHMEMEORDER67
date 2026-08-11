@@ -81,7 +81,6 @@ async function fetchFromCmc(): Promise<MemeCoin[]> {
   const apiKey = process.env.CMC_API_KEY?.trim();
   const base = apiKey ? AUTHED_BASE : KEYLESS_BASE;
   const url = new URL(base + LISTINGS_PATH);
-  url.searchParams.set("tag", "memes");
   url.searchParams.set("limit", "100");
   url.searchParams.set("sort", "market_cap");
   url.searchParams.set("sort_dir", "desc");
