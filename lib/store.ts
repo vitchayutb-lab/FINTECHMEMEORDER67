@@ -1,9 +1,10 @@
 import "server-only";
+import crypto from "crypto";
 import type { Portfolio, Trade, TradeRequest } from "./types";
 
 // ---------------------------------------------------------------------------
 // Paper-trading portfolio store (In-Memory Version for Vercel).
-// No local file writes (fs) to avoid Vercel Serverless Read-Only File System errors.
+// Prevents Vercel Serverless Read-Only File System errors (no fs module).
 // ---------------------------------------------------------------------------
 
 export const STARTING_BALANCE = 10_000;
@@ -35,11 +36,15 @@ function serialized<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 async function readPortfolio(): Promise<Portfolio> {
-  return globalPortfolio;
+  if (!globalPortfolio || !Array.isArray(globalPortfolio.holdings)) {
+    globalPortfolio = freshPortfolio();
+  }
+  // Return a deep copy to prevent reference mutation side-effects
+  return structuredClone(globalPortfolio);
 }
 
 async function writePortfolio(portfolio: Portfolio): Promise<void> {
-  globalPortfolio = portfolio;
+  globalPortfolio = structuredClone(portfolio);
 }
 
 export async function getPortfolio(): Promise<Portfolio> {
@@ -60,6 +65,7 @@ export async function sampleEquity(currentPricesById: Map<number, number>): Prom
     const portfolio = await readPortfolio();
     const equity = computeEquity(portfolio, currentPricesById);
     const last = portfolio.equityHistory[portfolio.equityHistory.length - 1];
+    
     if (!last || Math.abs(last.equity - equity) > 0.005) {
       portfolio.equityHistory.push({ timestamp: new Date().toISOString(), equity });
       if (portfolio.equityHistory.length > MAX_EQUITY_POINTS) {
@@ -72,14 +78,16 @@ export async function sampleEquity(currentPricesById: Map<number, number>): Prom
 }
 
 export function computeEquity(portfolio: Portfolio, pricesById: Map<number, number>): number {
-  const holdingsValue = portfolio.holdings.reduce((sum, h) => {
+  const holdings = portfolio.holdings || [];
+  const holdingsValue = holdings.reduce((sum, h) => {
     const price = pricesById.get(h.coinId) ?? h.avgCost;
     return sum + h.quantity * price;
   }, 0);
-  return portfolio.cash + holdingsValue;
+  return (portfolio.cash || 0) + holdingsValue;
 }
 
 function round(n: number, dp = 8): number {
+  if (!Number.isFinite(n)) return 0;
   const f = 10 ** dp;
   return Math.round(n * f) / f;
 }
@@ -138,7 +146,7 @@ export async function executeTrade(req: TradeRequest): Promise<{ portfolio: Port
     }
 
     const trade: Trade = {
-      id: crypto.randomUUID(),
+      id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       timestamp: new Date().toISOString(),
       side: req.side,
       coinId: req.coinId,
