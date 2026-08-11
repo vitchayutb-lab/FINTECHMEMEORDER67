@@ -116,6 +116,7 @@ async function fetchFromCmc(): Promise<MemeCoin[]> {
   }
 
   const json = (await res.json()) as CmcListingsResponse;
+  console.error("CMC API Raw Error:", res.status, errorText);
   if (json.status.error_code !== 0) {
     throw new CmcError(json.status.error_message ?? "Unknown CoinMarketCap API error.");
   }
