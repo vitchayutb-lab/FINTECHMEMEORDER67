@@ -2,7 +2,7 @@
 // Kept in one place so the API routes, store, and UI all agree on shape.
 
 export interface MemeCoin {
-  id: number; // CoinMarketCap numeric ID — stable, prefer over symbol for lookups
+  id: number;
   name: string;
   symbol: string;
   slug: string;
@@ -15,6 +15,7 @@ export interface MemeCoin {
   volume24h: number | null;
   logoUrl: string;
   lastUpdated: string;
+  category: string; // เพิ่มฟิลด์หมวดหมู่เหรียญ
 }
 
 export type OrderSide = "buy" | "sell";
