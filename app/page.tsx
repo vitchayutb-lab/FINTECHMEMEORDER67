@@ -61,6 +61,7 @@ export default function Home() {
       if (res.ok) {
         const data = await res.json();
         setPortfolio(data.portfolio);
+        await fetchData(); // อัปเดตข้อมูลสดใหม่ทันที
       }
     } catch {
       alert("Failed to reset portfolio.");
@@ -96,6 +97,9 @@ export default function Home() {
       setPortfolio(data.portfolio);
       setTradeAmount("");
       setSelectedCoin(null); // Close Drawer
+      
+      // ⚡ สั่งอัปเดตข้อมูลพอร์ตและราคาสดใหม่ทันทีโดยไม่ต้องกด F5
+      await fetchData();
     } catch (err) {
       setTradeError(err instanceof Error ? err.message : "Trade failed");
     } finally {
