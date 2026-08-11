@@ -1,20 +1,14 @@
 import "server-only";
-import { promises as fs } from "fs";
-import path from "path";
 import type { Portfolio, Trade, TradeRequest } from "./types";
 
 // ---------------------------------------------------------------------------
-// Paper-trading portfolio store. This is a SIMULATION ONLY — no real funds,
-// no real exchange, no real orders. State lives in a local JSON file, which
-// is enough for a single-player practice terminal and keeps the project
-// dependency-free (no database to install/host).
+// Paper-trading portfolio store (In-Memory Version for Vercel).
+// No local file writes (fs) to avoid Vercel Serverless Read-Only File System errors.
 // ---------------------------------------------------------------------------
 
 export const STARTING_BALANCE = 10_000;
 const MAX_EQUITY_POINTS = 500;
 const MAX_TRADES = 500;
-const DATA_DIR = path.join(process.cwd(), "data");
-const DATA_FILE = path.join(DATA_DIR, "portfolio.json");
 
 export class TradeError extends Error {}
 
@@ -30,8 +24,9 @@ function freshPortfolio(): Portfolio {
   };
 }
 
-// Simple in-process queue so concurrent requests (e.g. a double-clicked
-// order button) can't read-modify-write the file at the same time.
+// Global In-Memory state
+let globalPortfolio: Portfolio = freshPortfolio();
+
 let queue: Promise<unknown> = Promise.resolve();
 function serialized<T>(fn: () => Promise<T>): Promise<T> {
   const run = queue.then(fn, fn);
@@ -40,19 +35,11 @@ function serialized<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 async function readPortfolio(): Promise<Portfolio> {
-  try {
-    const raw = await fs.readFile(DATA_FILE, "utf-8");
-    return JSON.parse(raw) as Portfolio;
-  } catch {
-    const fresh = freshPortfolio();
-    await writePortfolio(fresh);
-    return fresh;
-  }
+  return globalPortfolio;
 }
 
 async function writePortfolio(portfolio: Portfolio): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(DATA_FILE, JSON.stringify(portfolio, null, 2), "utf-8");
+  globalPortfolio = portfolio;
 }
 
 export async function getPortfolio(): Promise<Portfolio> {
