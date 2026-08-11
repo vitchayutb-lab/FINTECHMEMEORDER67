@@ -27,6 +27,7 @@ export async function POST(request: Request) {
     const result = await executeTrade({ side, coinId, symbol, name, price, amount, mode });
     return NextResponse.json(result);
   } catch (err) {
+    console.error("POST /api/trade Error:", err);
     if (err instanceof TradeError) {
       return NextResponse.json({ error: err.message }, { status: 400 });
     }
