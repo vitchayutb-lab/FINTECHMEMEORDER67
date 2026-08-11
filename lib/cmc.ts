@@ -8,9 +8,6 @@ import type { MemeCoin } from "./types";
 // ---------------------------------------------------------------------------
 
 const AUTHED_BASE = "https://pro-api.coinmarketcap.com";
-// Keyless base lets the app return real data with zero setup, at much lower
-// rate limits. We use it automatically when CMC_API_KEY isn't set yet, so
-// `npm run dev` shows live prices immediately; see README for upgrading.
 const KEYLESS_BASE = "https://pro-api.coinmarketcap.com/trial-pro-api";
 
 const LISTINGS_PATH = "/v1/cryptocurrency/listings/latest";
@@ -100,24 +97,33 @@ async function fetchFromCmc(): Promise<MemeCoin[]> {
   }
 
   if (res.status === 401 || res.status === 403) {
+    const errorText = await res.text().catch(() => "");
+    console.error(`[CMC ${res.status}] Auth Error:`, errorText);
     throw new CmcError(
-      "CoinMarketCap rejected the API key. Check CMC_API_KEY in .env.local.",
+      "CoinMarketCap rejected the API key. Check CMC_API_KEY in Vercel Environment Variables.",
       401
     );
   }
+
   if (res.status === 429) {
     throw new CmcError(
       "CoinMarketCap rate limit hit (free tier). Prices will refresh again shortly.",
       429
     );
   }
+
   if (!res.ok) {
-    throw new CmcError(`CoinMarketCap API error (HTTP ${res.status}).`, res.status);
+    const errorText = await res.text().catch(() => "");
+    console.error(`[CMC Raw Error ${res.status}]:`, errorText);
+    throw new CmcError(
+      `CoinMarketCap API error (HTTP ${res.status}): ${errorText || res.statusText}`,
+      res.status
+    );
   }
 
   const json = (await res.json()) as CmcListingsResponse;
-  console.error("CMC API Raw Error:", res.status, errorText);
   if (json.status.error_code !== 0) {
+    console.error("[CMC API Error Code]:", json.status);
     throw new CmcError(json.status.error_message ?? "Unknown CoinMarketCap API error.");
   }
 
