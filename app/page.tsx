@@ -1,33 +1,55 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { AlertTriangle } from "lucide-react";
 import PriceTable from "@/components/PriceTable";
 import OrderTicket from "@/components/OrderTicket";
 import { usePrices } from "@/lib/hooks";
-import type { MemeCoin, OrderSide } from "@/lib/types";
+import type { MemeCoin, OrderSide, Portfolio } from "@/lib/types";
 
 const CATEGORIES = ["All", "Meme", "Layer 1 / 2", "DeFi", "AI", "Gaming"];
+const PORTFOLIO_STORAGE_KEY = "paper_terminal_portfolio";
 
 export default function DashboardPage() {
   const { coins = [], loading, error, keyless } = usePrices();
   const [order, setOrder] = useState<{ coin: MemeCoin; side: OrderSide } | null>(null);
 
-  // 1. เก็บ State ช่องค้นหา และ หมวดหมู่ไว้ที่ DashboardPage เพื่อไม่ให้โดน Reset
+  // 1. ช่องค้นหาหลักเพียงช่องเดียว + Category State
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
 
-  // 2. กรองข้อมูลเหรียญด้วย useMemo (Client-side In-Memory Filtering)
+  // 2. ดึง/บันทึกพอร์ตลง LocalStorage ป้องกันเงิน Demo $10,000 Reset
+  const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(PORTFOLIO_STORAGE_KEY);
+      if (saved) {
+        setPortfolio(JSON.parse(saved));
+      }
+    } catch {
+      // Ignore
+    }
+  }, []);
+
+  const handlePortfolioUpdate = (newPortfolio: Portfolio) => {
+    setPortfolio(newPortfolio);
+    try {
+      localStorage.setItem(PORTFOLIO_STORAGE_KEY, JSON.stringify(newPortfolio));
+    } catch {
+      // Ignore
+    }
+  };
+
+  // 3. กรองข้อมูลเหรียญใน Memory ฝั่ง Client (ไม่ทำให้หน้าเว็บ Reload)
   const filteredCoins = useMemo(() => {
     const safeCoins = Array.isArray(coins) ? coins : [];
     return safeCoins.filter((coin) => {
       if (!coin) return false;
 
-      // กรองหมวดหมู่ (หากมีฟิลด์ category)
       const matchesCategory =
         selectedCategory === "All" || (coin.category || "General") === selectedCategory;
 
-      // กรองชื่อเหรียญ หรือ สัญลักษณ์ (Symbol)
       const q = searchQuery.trim().toLowerCase();
       const matchesSearch =
         q === "" ||
@@ -38,7 +60,6 @@ export default function DashboardPage() {
     });
   }, [coins, searchQuery, selectedCategory]);
 
-  // เช็กว่าเป็นการโหลดข้อมูลครั้งแรกสุดหรือไม่ (เพื่อไม่ให้ unmount ตารางตอน re-fetch)
   const isInitialLoading = loading && coins.length === 0;
 
   return (
@@ -69,10 +90,10 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* แถบควบคุม Search & Category Filter */}
+      {/* แถบควบคุมหลัก: ช่อง Search เดียว + ปุ่ม Category */}
       {!isInitialLoading && (
         <div className="flex flex-col sm:flex-row gap-3 justify-between items-stretch sm:items-center">
-          {/* ช่องค้นหา */}
+          {/* ช่องค้นหาเพียงช่องเดียว */}
           <div className="relative flex-1 max-w-xs">
             <input
               type="text"
@@ -110,19 +131,24 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* แสดงตารางเหรียญที่ผ่านการกรองแล้ว */}
+      {/* ตารางแสดงผล */}
       {isInitialLoading ? (
         <div className="border border-line bg-panel px-4 py-16 text-center text-cream-dim text-sm">
           Loading meme coin board…
         </div>
       ) : (
-        <PriceTable coins={filteredCoins} onOrder={(coin, side) => setOrder({ coin, side })} />
+        <PriceTable
+          coins={filteredCoins}
+          onOrder={(coin, side) => setOrder({ coin, side })}
+        />
       )}
 
       {order && (
         <OrderTicket
           coin={order.coin}
           side={order.side}
+          currentPortfolio={portfolio}
+          onPortfolioUpdate={handlePortfolioUpdate}
           onSideChange={(side) => setOrder({ coin: order.coin, side })}
           onClose={() => setOrder(null)}
         />
