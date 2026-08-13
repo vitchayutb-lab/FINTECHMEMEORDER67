@@ -8,7 +8,7 @@ import { usePrices, usePortfolio } from "@/lib/hooks";
 import type { MemeCoin, OrderSide } from "@/lib/types";
 
 export default function DashboardPage() {
-  const { coins, loading, error, keyless } = usePrices();
+  const { coins, loading, error, keyless, keylessLimited } = usePrices();
   const { persistent } = usePortfolio();
   const [order, setOrder] = useState<{ coin: MemeCoin; side: OrderSide } | null>(null);
 
@@ -26,9 +26,12 @@ export default function DashboardPage() {
         <div className="flex items-start gap-2 border border-amber-dim bg-amber/10 px-3 py-2.5 text-xs text-amber-soft">
           <AlertTriangle size={14} className="shrink-0 mt-0.5" />
           <span>
-            Running on CoinMarketCap&rsquo;s free keyless endpoint (low rate limit). Add a free
-            <code className="mx-1 px-1 bg-void/40">CMC_API_KEY</code> to <code className="px-1 bg-void/40">.env.local</code> for
-            smoother refreshes — see the README.
+            {keylessLimited
+              ? "Keyless mode couldn't use CoinMarketCap's meme-coin filter, so this is a best-effort shortlist, not the full tag-based list."
+              : "Running on CoinMarketCap's free keyless endpoint (low rate limit)."}{" "}
+            Add a free <code className="mx-1 px-1 bg-void/40">CMC_API_KEY</code> to{" "}
+            <code className="px-1 bg-void/40">.env.local</code> (or your Vercel project&rsquo;s Environment
+            Variables) for the real thing — see the README.
           </span>
         </div>
       )}

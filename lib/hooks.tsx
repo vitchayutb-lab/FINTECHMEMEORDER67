@@ -15,6 +15,7 @@ interface PricesContextValue {
   loading: boolean;
   error: string | null;
   keyless: boolean;
+  keylessLimited: boolean;
   refresh: () => Promise<void>;
 }
 
@@ -25,6 +26,7 @@ export function PricesProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [keyless, setKeyless] = useState(false);
+  const [keylessLimited, setKeylessLimited] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -33,6 +35,7 @@ export function PricesProvider({ children }: { children: ReactNode }) {
       if (!res.ok) throw new Error(json.error ?? "Failed to load prices.");
       setCoins(json.coins);
       setKeyless(Boolean(json.keyless));
+      setKeylessLimited(Boolean(json.keylessLimited));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load prices.");
@@ -48,7 +51,7 @@ export function PricesProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   return (
-    <PricesContext.Provider value={{ coins, loading, error, keyless, refresh }}>
+    <PricesContext.Provider value={{ coins, loading, error, keyless, keylessLimited, refresh }}>
       {children}
     </PricesContext.Provider>
   );

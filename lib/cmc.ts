@@ -17,6 +17,17 @@ const LISTINGS_PATH = "/v1/cryptocurrency/listings/latest";
 
 const CACHE_TTL_MS = 30_000; // matches CMC's ~1 min data refresh; keeps credit usage low
 
+// Fallback filter used ONLY when keyless mode's `tag` param gets rejected
+// (see fetchFromCmc). Not authoritative — once a real CMC_API_KEY is set,
+// the actual `tag=memes` filter takes over and this list is unused.
+const MEME_SYMBOLS = new Set([
+  "DOGE", "SHIB", "PEPE", "BONK", "WIF", "FLOKI", "FARTCOIN", "PENGU", "SPX",
+  "BRETT", "POPCAT", "MOG", "TURBO", "MEME", "BOME", "NEIRO", "PNUT", "GOAT",
+  "ACT", "TRUMP", "WOJAK", "MEW", "DEGEN", "TOSHI", "BABYDOGE", "ELON",
+  "HOGE", "SAMO", "COQ", "MYRO", "GIGA", "MOODENG", "PONKE", "SLERF",
+  "CHILLGUY", "KISHU", "LADYS", "AIDOGE", "TREMP", "MAGA", "BODEN", "RETARDIO",
+]);
+
 interface CmcListingsResponse {
   status: {
     error_code: number;
@@ -42,8 +53,8 @@ interface CmcListingsResponse {
   }>;
 }
 
-let cache: { data: MemeCoin[]; fetchedAt: number } | null = null;
-let inFlight: Promise<MemeCoin[]> | null = null;
+let cache: { data: MemeCoin[]; keylessLimited: boolean; fetchedAt: number } | null = null;
+let inFlight: Promise<{ coins: MemeCoin[]; keylessLimited: boolean }> | null = null;
 
 export class CmcError extends Error {
   status: number;
@@ -77,22 +88,26 @@ function mapCoin(raw: CmcListingsResponse["data"][number]): MemeCoin {
   };
 }
 
-async function fetchFromCmc(): Promise<MemeCoin[]> {
-  const apiKey = process.env.CMC_API_KEY?.trim();
-  const base = apiKey ? AUTHED_BASE : KEYLESS_BASE;
+async function requestListings(
+  base: string,
+  params: Record<string, string>,
+  apiKey: string | undefined
+): Promise<Response> {
   const url = new URL(base + LISTINGS_PATH);
-  url.searchParams.set("tag", "memes");
-  url.searchParams.set("limit", "100");
-  url.searchParams.set("sort", "market_cap");
-  url.searchParams.set("sort_dir", "desc");
-  url.searchParams.set("convert", "USD");
-
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   const headers: Record<string, string> = { Accept: "application/json" };
   if (apiKey) headers["X-CMC_PRO_API_KEY"] = apiKey;
+  return fetch(url.toString(), { headers, cache: "no-store" });
+}
+
+async function fetchFromCmc(): Promise<{ coins: MemeCoin[]; keylessLimited: boolean }> {
+  const apiKey = process.env.CMC_API_KEY?.trim();
+  const base = apiKey ? AUTHED_BASE : KEYLESS_BASE;
+  const fullParams = { tag: "memes", limit: "100", sort: "market_cap", sort_dir: "desc", convert: "USD" };
 
   let res: Response;
   try {
-    res = await fetch(url.toString(), { headers, cache: "no-store" });
+    res = await requestListings(base, fullParams, apiKey);
   } catch {
     throw new CmcError(
       "Couldn't reach the CoinMarketCap API. Check your network connection and try again.",
@@ -100,9 +115,28 @@ async function fetchFromCmc(): Promise<MemeCoin[]> {
     );
   }
 
+  // The keyless trial tier only documents `limit`/`convert` — `tag` and
+  // `sort` are not guaranteed supported there and can come back as a plain
+  // 400. Rather than surface that raw error, retry once with the minimal
+  // param set so the board still loads (just not meme-filtered/sorted).
+  let keylessLimited = false;
+  if (!apiKey && res.status === 400) {
+    keylessLimited = true;
+    try {
+      res = await requestListings(base, { limit: "100", convert: "USD" }, apiKey);
+    } catch {
+      throw new CmcError(
+        "Couldn't reach the CoinMarketCap API. Check your network connection and try again.",
+        503
+      );
+    }
+  }
+
   if (res.status === 401 || res.status === 403) {
     throw new CmcError(
-      "CoinMarketCap rejected the API key. Check CMC_API_KEY in .env.local.",
+      apiKey
+        ? "CoinMarketCap rejected the API key. Check CMC_API_KEY in your environment variables."
+        : "CoinMarketCap's keyless endpoint refused the request. Add a free CMC_API_KEY — see the README.",
       401
     );
   }
@@ -121,21 +155,28 @@ async function fetchFromCmc(): Promise<MemeCoin[]> {
     throw new CmcError(json.status.error_message ?? "Unknown CoinMarketCap API error.");
   }
 
-  return json.data.map(mapCoin).sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity));
+  let coins = json.data.map(mapCoin);
+  if (keylessLimited) {
+    // No `tag` filter came through, so this is a general top-coins list —
+    // narrow it down client-side so the board still reads as "meme coins".
+    coins = coins.filter((c) => MEME_SYMBOLS.has(c.symbol.toUpperCase()));
+  }
+  coins.sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity));
+  return { coins, keylessLimited };
 }
 
 /** Returns cached meme-coin listings, refetching at most once per CACHE_TTL_MS. */
-export async function getMemeCoins(): Promise<MemeCoin[]> {
+export async function getMemeCoins(): Promise<{ coins: MemeCoin[]; keylessLimited: boolean }> {
   const now = Date.now();
   if (cache && now - cache.fetchedAt < CACHE_TTL_MS) {
-    return cache.data;
+    return { coins: cache.data, keylessLimited: cache.keylessLimited };
   }
   // Coalesce concurrent callers into a single upstream request.
   if (!inFlight) {
     inFlight = fetchFromCmc()
-      .then((data) => {
-        cache = { data, fetchedAt: Date.now() };
-        return data;
+      .then((result) => {
+        cache = { data: result.coins, keylessLimited: result.keylessLimited, fetchedAt: Date.now() };
+        return result;
       })
       .finally(() => {
         inFlight = null;
@@ -145,7 +186,7 @@ export async function getMemeCoins(): Promise<MemeCoin[]> {
     return await inFlight;
   } catch (err) {
     // Serve stale cache rather than a hard failure, if we have anything at all.
-    if (cache) return cache.data;
+    if (cache) return { coins: cache.data, keylessLimited: cache.keylessLimited };
     throw err;
   }
 }

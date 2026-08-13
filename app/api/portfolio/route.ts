@@ -7,7 +7,7 @@ export async function GET() {
     // Piggyback a fresh equity sample onto normal polling so the equity
     // curve on the Portfolio page fills in over the session without a
     // separate background job.
-    const coins = await getMemeCoins().catch(() => []);
+    const { coins } = await getMemeCoins().catch(() => ({ coins: [], keylessLimited: false }));
     const pricesById = new Map(coins.map((c) => [c.id, c.price]));
     const portfolio = coins.length ? await sampleEquity(pricesById) : await getPortfolio();
     return NextResponse.json({ portfolio, persistent: isPersistentStorage() });
