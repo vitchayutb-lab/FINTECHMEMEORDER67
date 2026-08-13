@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import { ArrowUpDown } from "lucide-react";
+import { ArrowUpDown, Search } from "lucide-react";
 import type { MemeCoin, OrderSide } from "@/lib/types";
 import { formatCompact, formatPercent, formatPrice } from "@/lib/format";
 import { usePortfolio } from "@/lib/hooks";
@@ -20,6 +20,7 @@ function PercentCell({ value }: { value: number | null }) {
 }
 
 export default function PriceTable({ coins, onOrder }: Props) {
+  const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("rank");
   const [sortDir, setSortDir] = useState<1 | -1>(1);
   const [flashes, setFlashes] = useState<Record<number, "gain" | "loss">>({});
@@ -57,14 +58,17 @@ export default function PriceTable({ coins, onOrder }: Props) {
     }
   }
 
-  // เรียงลำดับรายการเหรียญตามที่ผู้ใช้เลือกคลิกที่หัวตาราง
-  const sortedCoins = useMemo(() => {
-    return [...coins].sort((a, b) => {
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    const list = term
+      ? coins.filter((c) => c.name.toLowerCase().includes(term) || c.symbol.toLowerCase().includes(term))
+      : coins;
+    return [...list].sort((a, b) => {
       const av = a[sortKey] ?? -Infinity;
       const bv = b[sortKey] ?? -Infinity;
       return av < bv ? -1 * sortDir : av > bv ? 1 * sortDir : 0;
     });
-  }, [coins, sortKey, sortDir]);
+  }, [coins, search, sortKey, sortDir]);
 
   const headers: { key: SortKey; label: string; className?: string }[] = [
     { key: "rank", label: "#", className: "w-10" },
@@ -78,6 +82,17 @@ export default function PriceTable({ coins, onOrder }: Props) {
 
   return (
     <div className="border border-line bg-panel">
+      <div className="flex items-center gap-3 border-b border-line px-4 py-3">
+        <Search size={15} className="text-cream-dim shrink-0" />
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Filter by name or symbol…"
+          className="bg-transparent outline-none text-sm placeholder:text-cream-dim/60 w-full font-mono"
+        />
+        <span className="text-xs text-cream-dim shrink-0 tabular-nums">{filtered.length} coins</span>
+      </div>
+
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -98,7 +113,7 @@ export default function PriceTable({ coins, onOrder }: Props) {
             </tr>
           </thead>
           <tbody>
-            {sortedCoins.map((c) => (
+            {filtered.map((c) => (
               <tr
                 key={c.id}
                 className={
@@ -157,10 +172,10 @@ export default function PriceTable({ coins, onOrder }: Props) {
                 </td>
               </tr>
             ))}
-            {sortedCoins.length === 0 && (
+            {filtered.length === 0 && (
               <tr>
                 <td colSpan={8} className="px-4 py-10 text-center text-cream-dim text-sm">
-                  No coins found.
+                  No meme coins match &ldquo;{search}&rdquo;.
                 </td>
               </tr>
             )}

@@ -1,41 +1,21 @@
 import "server-only";
-import crypto from "crypto";
 import type { MemeCoin } from "./types";
 
+// ---------------------------------------------------------------------------
+// CoinMarketCap client. Server-side only — the API key must never reach the
+// browser (CMC blocks client-side calls anyway to protect the key, so this
+// isn't optional). Called only from app/api/prices/route.ts.
+// ---------------------------------------------------------------------------
+
 const AUTHED_BASE = "https://pro-api.coinmarketcap.com";
+// Keyless base lets the app return real data with zero setup, at much lower
+// rate limits. We use it automatically when CMC_API_KEY isn't set yet, so
+// `npm run dev` shows live prices immediately; see README for upgrading.
 const KEYLESS_BASE = "https://pro-api.coinmarketcap.com/trial-pro-api";
+
 const LISTINGS_PATH = "/v1/cryptocurrency/listings/latest";
-const CACHE_TTL_MS = 30_000;
 
-// แผนผังจัดหมวดหมู่เหรียญตามประเภท
-const CATEGORY_MAP: Record<string, string[]> = {
-  Meme: [
-    "DOGE", "SHIB", "PEPE", "WIF", "BONK", "FLOKI", "POPCAT", "MOG", 
-    "BOME", "MEW", "NEIRO", "TURBO", "MEME", "BRETT", "DEGEN", "MYRO", "PENGU"
-  ],
-  "Layer 1 / 2": [
-    "BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "AVAX", "NEAR", "SUI", 
-    "TON", "DOT", "ATOM", "MATIC", "POL", "APT", "OP", "ARB", "LTC", "BCH"
-  ],
-  DeFi: [
-    "UNI", "AAVE", "LINK", "MKR", "LDO", "CRV", "PENDLE", "RUNE", 
-    "INJ", "SNX", "CAKE", "COMP", "DYDX", "RAY"
-  ],
-  AI: [
-    "NEAR", "TAO", "RENDER", "FET", "WLD", "AKT", "GRT", "THETA", "AGIX"
-  ],
-  Gaming: [
-    "AXS", "GALA", "SAND", "MANA", "IMX", "BEAM", "PRIME", "PIXEL"
-  ]
-};
-
-function detectCategory(symbol: string): string {
-  const sym = symbol.toUpperCase();
-  for (const [category, symbols] of Object.entries(CATEGORY_MAP)) {
-    if (symbols.includes(sym)) return category;
-  }
-  return "General";
-}
+const CACHE_TTL_MS = 30_000; // matches CMC's ~1 min data refresh; keeps credit usage low
 
 interface CmcListingsResponse {
   status: {
@@ -94,7 +74,6 @@ function mapCoin(raw: CmcListingsResponse["data"][number]): MemeCoin {
     volume24h: usd.volume_24h,
     logoUrl: logoUrl(raw.id),
     lastUpdated: usd.last_updated,
-    category: detectCategory(raw.symbol),
   };
 }
 
@@ -102,8 +81,8 @@ async function fetchFromCmc(): Promise<MemeCoin[]> {
   const apiKey = process.env.CMC_API_KEY?.trim();
   const base = apiKey ? AUTHED_BASE : KEYLESS_BASE;
   const url = new URL(base + LISTINGS_PATH);
-
-  url.searchParams.set("limit", "200");
+  url.searchParams.set("tag", "memes");
+  url.searchParams.set("limit", "100");
   url.searchParams.set("sort", "market_cap");
   url.searchParams.set("sort_dir", "desc");
   url.searchParams.set("convert", "USD");
@@ -115,28 +94,43 @@ async function fetchFromCmc(): Promise<MemeCoin[]> {
   try {
     res = await fetch(url.toString(), { headers, cache: "no-store" });
   } catch {
-    throw new CmcError("Couldn't reach CoinMarketCap API.", 503);
+    throw new CmcError(
+      "Couldn't reach the CoinMarketCap API. Check your network connection and try again.",
+      503
+    );
   }
 
+  if (res.status === 401 || res.status === 403) {
+    throw new CmcError(
+      "CoinMarketCap rejected the API key. Check CMC_API_KEY in .env.local.",
+      401
+    );
+  }
+  if (res.status === 429) {
+    throw new CmcError(
+      "CoinMarketCap rate limit hit (free tier). Prices will refresh again shortly.",
+      429
+    );
+  }
   if (!res.ok) {
-    const errorText = await res.text().catch(() => "");
-    console.error(`[CMC Error ${res.status}]:`, errorText);
-    throw new CmcError(`CMC API Error (HTTP ${res.status})`, res.status);
+    throw new CmcError(`CoinMarketCap API error (HTTP ${res.status}).`, res.status);
   }
 
   const json = (await res.json()) as CmcListingsResponse;
   if (json.status.error_code !== 0) {
-    throw new CmcError(json.status.error_message ?? "Unknown CMC Error.");
+    throw new CmcError(json.status.error_message ?? "Unknown CoinMarketCap API error.");
   }
 
   return json.data.map(mapCoin).sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity));
 }
 
+/** Returns cached meme-coin listings, refetching at most once per CACHE_TTL_MS. */
 export async function getMemeCoins(): Promise<MemeCoin[]> {
   const now = Date.now();
   if (cache && now - cache.fetchedAt < CACHE_TTL_MS) {
     return cache.data;
   }
+  // Coalesce concurrent callers into a single upstream request.
   if (!inFlight) {
     inFlight = fetchFromCmc()
       .then((data) => {
@@ -150,6 +144,7 @@ export async function getMemeCoins(): Promise<MemeCoin[]> {
   try {
     return await inFlight;
   } catch (err) {
+    // Serve stale cache rather than a hard failure, if we have anything at all.
     if (cache) return cache.data;
     throw err;
   }

@@ -70,6 +70,7 @@ interface PortfolioContextValue {
   portfolio: Portfolio | null;
   loading: boolean;
   error: string | null;
+  persistent: boolean;
   refresh: () => Promise<void>;
   reset: () => Promise<void>;
   placeOrder: (req: TradeRequest) => Promise<Trade>;
@@ -81,6 +82,7 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [persistent, setPersistent] = useState(true);
 
   const refresh = useCallback(async () => {
     try {
@@ -88,6 +90,7 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Failed to load portfolio.");
       setPortfolio(json.portfolio);
+      setPersistent(Boolean(json.persistent));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load portfolio.");
@@ -121,7 +124,7 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   return (
-    <PortfolioContext.Provider value={{ portfolio, loading, error, refresh, reset, placeOrder }}>
+    <PortfolioContext.Provider value={{ portfolio, loading, error, persistent, refresh, reset, placeOrder }}>
       {children}
     </PortfolioContext.Provider>
   );

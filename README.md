@@ -44,10 +44,11 @@ banner on the dashboard reminding you to add a key once you hit its limits.
 - Every wallet starts at **$10,000** in paper cash (`lib/store.ts`).
 - Buys/sells fill instantly at whatever price `/api/prices` last returned —
   there's no order book, no slippage modeling, no partial fills.
-- State (cash, holdings, trade history, equity curve) is written to
-  `data/portfolio.json` on the server. It's a single shared simulation (no
-  login/accounts) — fine for local/personal use, not built for multiple
-  people trading the same instance.
+- State (cash, holdings, trade history, equity curve) lives in Redis if
+  `UPSTASH_REDIS_REST_URL`/`_TOKEN` are set, otherwise in a local
+  `data/portfolio.json` file. Either way it's a single shared simulation (no
+  login/accounts) — one balance for whoever opens the site, which is fine for
+  personal use but not built for multiple people sharing one deployment.
 - Prices are cached server-side for 30 seconds to stay well within the free
   API tier's rate limit.
 
@@ -82,13 +83,38 @@ git push -u origin main
 (Create the empty repo on GitHub first — no README/license, since this folder
 already has one — then run the commands above.)
 
-## Deploying
+## Deploying (so it works from any device, not just localhost)
 
-Because the CMC API key must stay server-side, deploy somewhere that runs the
-Next.js server (not a static host). The path of least resistance is
-[Vercel](https://vercel.com): import the GitHub repo, add `CMC_API_KEY` as an
-environment variable in the project settings, deploy. Any other Node host
-(Railway, Render, Fly.io, your own server) works too via `npm run build && npm start`.
+Two things need to be true for the deployed site to work properly:
+
+1. **The server has to keep running** — this isn't a static site, so it needs
+   a host that runs the Next.js server (Vercel, in the steps below).
+2. **The portfolio needs a real database** — locally, state is saved to a
+   JSON file on disk. Most hosts (Vercel included) don't guarantee that file
+   persists between requests, so without a database your paper balance can
+   reset unexpectedly. The app already supports this — it just needs two
+   environment variables to switch on.
+
+Steps:
+
+1. Push this repo to GitHub (see above).
+2. Go to [vercel.com](https://vercel.com), sign in with GitHub, and import the repo. Keep the default build settings.
+3. Before the first deploy (or after, in Project Settings → Environment Variables), add `CMC_API_KEY`.
+4. In the Vercel dashboard, go to **Storage → Marketplace Database Providers → Upstash**, install it, and create a free Redis database. Vercel automatically adds `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` to your project — no code changes needed, `lib/store.ts` picks them up automatically.
+5. Redeploy (Vercel does this automatically when env vars change, or trigger it manually from the Deployments tab).
+
+That's it — you'll get a `https://your-project.vercel.app` URL that works from
+any device, with a paper balance that actually persists. Both Vercel Hobby
+and Upstash's free Redis tier are free for personal projects (no card
+required for Upstash; Vercel Hobby is free for non-commercial use).
+
+If you'd rather not add a database, the app still deploys and runs — it just
+falls back to the local file, so treat the balance as disposable (it can
+reset on redeploys or when Vercel spins up a new instance).
+
+Any other Node host works too (Railway, Render, Fly.io, your own server) via
+`npm run build && npm start` — the same two env vars apply if the host's
+filesystem isn't persistent; check its docs if you're unsure.
 
 ## Extending it
 

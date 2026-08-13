@@ -1,15 +1,35 @@
 import "server-only";
-import crypto from "crypto";
+import { promises as fs } from "fs";
+import path from "path";
+import { Redis } from "@upstash/redis";
 import type { Portfolio, Trade, TradeRequest } from "./types";
 
 // ---------------------------------------------------------------------------
-// Paper-trading portfolio store (In-Memory Version for Vercel).
-// Prevents Vercel Serverless Read-Only File System errors (no fs module).
+// Paper-trading portfolio store. This is a SIMULATION ONLY — no real funds,
+// no real exchange, no real orders.
+//
+// Storage backend is chosen automatically:
+//   - If UPSTASH_REDIS_REST_URL / _TOKEN are set (e.g. added via the Vercel
+//     Marketplace → Upstash integration), state persists in Redis — required
+//     for any host with an ephemeral/read-only filesystem (Vercel, and free
+//     tiers on most other platforms).
+//   - Otherwise, falls back to a local JSON file — zero setup for `npm run
+//     dev`, but won't reliably persist once deployed. See README.
 // ---------------------------------------------------------------------------
 
 export const STARTING_BALANCE = 10_000;
 const MAX_EQUITY_POINTS = 500;
 const MAX_TRADES = 500;
+const DATA_DIR = path.join(process.cwd(), "data");
+const DATA_FILE = path.join(DATA_DIR, "portfolio.json");
+const REDIS_KEY = "papertrader:portfolio";
+
+const redis =
+  process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN ? Redis.fromEnv() : null;
+
+export function isPersistentStorage(): boolean {
+  return redis !== null;
+}
 
 export class TradeError extends Error {}
 
@@ -25,9 +45,11 @@ function freshPortfolio(): Portfolio {
   };
 }
 
-// Global In-Memory state
-let globalPortfolio: Portfolio = freshPortfolio();
-
+// Simple in-process queue so concurrent requests on the SAME server instance
+// (e.g. a double-clicked order button) can't read-modify-write at the same
+// time. On serverless hosts each invocation may be a separate instance, so
+// this isn't a global lock — fine for a single-player practice tool, where a
+// rare lost update between two near-simultaneous clicks is low stakes.
 let queue: Promise<unknown> = Promise.resolve();
 function serialized<T>(fn: () => Promise<T>): Promise<T> {
   const run = queue.then(fn, fn);
@@ -36,15 +58,30 @@ function serialized<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 async function readPortfolio(): Promise<Portfolio> {
-  if (!globalPortfolio || !Array.isArray(globalPortfolio.holdings)) {
-    globalPortfolio = freshPortfolio();
+  if (redis) {
+    const data = await redis.get<Portfolio>(REDIS_KEY);
+    if (data) return data;
+    const fresh = freshPortfolio();
+    await writePortfolio(fresh);
+    return fresh;
   }
-  // Return a deep copy to prevent reference mutation side-effects
-  return structuredClone(globalPortfolio);
+  try {
+    const raw = await fs.readFile(DATA_FILE, "utf-8");
+    return JSON.parse(raw) as Portfolio;
+  } catch {
+    const fresh = freshPortfolio();
+    await writePortfolio(fresh);
+    return fresh;
+  }
 }
 
 async function writePortfolio(portfolio: Portfolio): Promise<void> {
-  globalPortfolio = structuredClone(portfolio);
+  if (redis) {
+    await redis.set(REDIS_KEY, portfolio);
+    return;
+  }
+  await fs.mkdir(DATA_DIR, { recursive: true });
+  await fs.writeFile(DATA_FILE, JSON.stringify(portfolio, null, 2), "utf-8");
 }
 
 export async function getPortfolio(): Promise<Portfolio> {
@@ -65,7 +102,6 @@ export async function sampleEquity(currentPricesById: Map<number, number>): Prom
     const portfolio = await readPortfolio();
     const equity = computeEquity(portfolio, currentPricesById);
     const last = portfolio.equityHistory[portfolio.equityHistory.length - 1];
-    
     if (!last || Math.abs(last.equity - equity) > 0.005) {
       portfolio.equityHistory.push({ timestamp: new Date().toISOString(), equity });
       if (portfolio.equityHistory.length > MAX_EQUITY_POINTS) {
@@ -78,16 +114,14 @@ export async function sampleEquity(currentPricesById: Map<number, number>): Prom
 }
 
 export function computeEquity(portfolio: Portfolio, pricesById: Map<number, number>): number {
-  const holdings = portfolio.holdings || [];
-  const holdingsValue = holdings.reduce((sum, h) => {
+  const holdingsValue = portfolio.holdings.reduce((sum, h) => {
     const price = pricesById.get(h.coinId) ?? h.avgCost;
     return sum + h.quantity * price;
   }, 0);
-  return (portfolio.cash || 0) + holdingsValue;
+  return portfolio.cash + holdingsValue;
 }
 
 function round(n: number, dp = 8): number {
-  if (!Number.isFinite(n)) return 0;
   const f = 10 ** dp;
   return Math.round(n * f) / f;
 }
@@ -146,7 +180,7 @@ export async function executeTrade(req: TradeRequest): Promise<{ portfolio: Port
     }
 
     const trade: Trade = {
-      id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      id: crypto.randomUUID(),
       timestamp: new Date().toISOString(),
       side: req.side,
       coinId: req.coinId,
